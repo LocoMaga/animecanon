@@ -162,7 +162,7 @@ function formatMediaList(mediaList) {
   return formatted;
 }
 
-// 4. Buscar saga completa unificada (FILTRADO POR TOKENS Y RELEVANCIA)
+// 4. Buscar saga completa unificada (FILTRADO ESTRICTO + PLATAFORMAS HISPANAS)
 export async function searchSagasFromAniList(queryText) {
   const query = `
     query ($search: String) {
@@ -210,22 +210,19 @@ export async function searchSagasFromAniList(queryText) {
 
     if (mediaList.length === 0) return [];
 
-    // Tokens de búsqueda limpios
     const cleanQuery = queryText.toLowerCase().trim();
     const queryTokens = cleanQuery.split(' ').filter(t => t.length > 1);
 
-    // 1. Filtrar resultados que NO tengan relación directa con las palabras buscadas
+    // 1. Filtrar resultados que no tengan relación directa o sean comerciales/basura
     let filteredList = mediaList.filter(item => {
       const titleEng = (item.title.english || '').toLowerCase();
       const titleRom = (item.title.romaji || '').toLowerCase();
       const combined = `${titleEng} ${titleRom}`;
 
-      // Descartar comerciales conocidos y promos de marcas
       if (item.format === 'CM' || combined.includes('suntory') || combined.includes('commercial')) {
         return false;
       }
 
-      // Debe coincidir al menos con la mayoría de las palabras buscadas
       if (queryTokens.length > 0) {
         const matchesToken = queryTokens.every(token => combined.includes(token));
         return matchesToken;
@@ -234,12 +231,11 @@ export async function searchSagasFromAniList(queryText) {
       return true;
     });
 
-    // Si el filtro por tokens es muy estricto y se queda vacío, respaldar con los top populares
     if (filteredList.length === 0) {
       filteredList = [mediaList[0]];
     }
 
-    // 2. Ordenar por relevancia: Priorizar mayor Popularidad y Score
+    // 2. Ordenar por relevancia (Popularidad y Puntuación)
     filteredList.sort((a, b) => {
       const scoreA = (a.averageScore || 0) + (a.popularity ? a.popularity / 1000 : 0);
       const scoreB = (b.averageScore || 0) + (b.popularity ? b.popularity / 1000 : 0);
@@ -252,11 +248,27 @@ export async function searchSagasFromAniList(queryText) {
       .trim();
 
     const formattedItems = filteredList.map((item) => {
-      const streamingPlatforms = (item.externalLinks || []).filter(link => 
-        ['Crunchyroll', 'Netflix', 'Amazon', 'Hulu', 'Disney+', 'Funimation', 'Anime Onegai'].some(s => 
-          link.site.toLowerCase().includes(s.toLowerCase())
-        )
+      // Plataformas oficiales disponibles en la región hispana
+      const hispanoPlatforms = ['Crunchyroll', 'Netflix', 'Amazon', 'Disney+', 'Max', 'Anime Onegai'];
+
+      let streamingPlatforms = (item.externalLinks || []).filter(link => 
+        hispanoPlatforms.some(s => link.site.toLowerCase().includes(s.toLowerCase()))
       );
+
+      // Si no hay links directos, generamos buscadores regionales en español
+      if (streamingPlatforms.length === 0) {
+        const searchTitle = item.title.english || item.title.romaji;
+        streamingPlatforms = [
+          { 
+            site: 'Crunchyroll', 
+            url: `https://www.crunchyroll.com/es/search?q=${encodeURIComponent(searchTitle)}` 
+          },
+          { 
+            site: 'Netflix', 
+            url: `https://www.netflix.com/search?q=${encodeURIComponent(searchTitle)}` 
+          }
+        ];
+      }
 
       const year = item.startDate?.year || 9999;
       const month = item.startDate?.month || 12;
@@ -272,10 +284,7 @@ export async function searchSagasFromAniList(queryText) {
         rawDateValue: year * 10000 + month * 100 + day,
         description: item.description ? item.description.replace(/<[^>]*>?/gm, '') : 'Sin descripción disponible.',
         cover: item.coverImage?.extraLarge || item.coverImage?.large,
-        streamingPlatforms: streamingPlatforms.length > 0 ? streamingPlatforms : [
-          { site: 'Crunchyroll', url: `https://www.crunchyroll.com/search?q=${encodeURIComponent(item.title.romaji)}` },
-          { site: 'Netflix', url: `https://www.netflix.com/search?q=${encodeURIComponent(item.title.romaji)}` }
-        ]
+        streamingPlatforms: streamingPlatforms
       };
     });
 
