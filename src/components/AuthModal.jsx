@@ -44,7 +44,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
           }
         }
 
-        alert('¡Cuenta creada con éxito! Ya puedes iniciar sesión.');
+        alert('¡Cuenta creada con éxito! Ya puedes iniciar sesión. Confirme el correo electrónico para continuar.');
         setIsSignUp(false);
       } else {
         // Iniciar sesión

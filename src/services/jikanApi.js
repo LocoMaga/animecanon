@@ -162,16 +162,17 @@ function formatMediaList(mediaList) {
   return formatted;
 }
 
-// 4. Buscar saga completa unificada
+// 4. Buscar saga completa unificada (FILTRADO POR TOKENS Y RELEVANCIA)
 export async function searchSagasFromAniList(queryText) {
   const query = `
     query ($search: String) {
-      Page(page: 1, perPage: 30) {
-        media(search: $search, type: ANIME, isAdult: false) {
+      Page(page: 1, perPage: 25) {
+        media(search: $search, type: ANIME, sort: [SEARCH_MATCH, POPULARITY_DESC], isAdult: false) {
           id
           title {
             romaji
             english
+            native
           }
           coverImage {
             extraLarge
@@ -179,6 +180,7 @@ export async function searchSagasFromAniList(queryText) {
           }
           bannerImage
           averageScore
+          popularity
           genres
           description(asHtml: false)
           startDate { year month day }
@@ -204,16 +206,52 @@ export async function searchSagasFromAniList(queryText) {
       body: JSON.stringify({ query, variables: { search: queryText } })
     });
     const data = await response.json();
-    const mediaList = data?.data?.Page?.media || [];
+    let mediaList = data?.data?.Page?.media || [];
 
     if (mediaList.length === 0) return [];
 
-    const mainMedia = mediaList[0];
+    // Tokens de búsqueda limpios
+    const cleanQuery = queryText.toLowerCase().trim();
+    const queryTokens = cleanQuery.split(' ').filter(t => t.length > 1);
+
+    // 1. Filtrar resultados que NO tengan relación directa con las palabras buscadas
+    let filteredList = mediaList.filter(item => {
+      const titleEng = (item.title.english || '').toLowerCase();
+      const titleRom = (item.title.romaji || '').toLowerCase();
+      const combined = `${titleEng} ${titleRom}`;
+
+      // Descartar comerciales conocidos y promos de marcas
+      if (item.format === 'CM' || combined.includes('suntory') || combined.includes('commercial')) {
+        return false;
+      }
+
+      // Debe coincidir al menos con la mayoría de las palabras buscadas
+      if (queryTokens.length > 0) {
+        const matchesToken = queryTokens.every(token => combined.includes(token));
+        return matchesToken;
+      }
+
+      return true;
+    });
+
+    // Si el filtro por tokens es muy estricto y se queda vacío, respaldar con los top populares
+    if (filteredList.length === 0) {
+      filteredList = [mediaList[0]];
+    }
+
+    // 2. Ordenar por relevancia: Priorizar mayor Popularidad y Score
+    filteredList.sort((a, b) => {
+      const scoreA = (a.averageScore || 0) + (a.popularity ? a.popularity / 1000 : 0);
+      const scoreB = (b.averageScore || 0) + (b.popularity ? b.popularity / 1000 : 0);
+      return scoreB - scoreA;
+    });
+
+    const mainMedia = filteredList[0];
     const baseTitle = (mainMedia.title.english || mainMedia.title.romaji)
-      .replace(/(Season\s*\d+|Part\s*\d+|The Final Season|2nd Season|3rd Season|4th Season|Cour\s*\d+|:.*)/i, '')
+      .replace(/(Season\s*\d+|Part\s*\d+|The Final Season|2nd Season|3rd Season|4th Season|Cour\s*\d+|Movie|:.*)/i, '')
       .trim();
 
-    const formattedItems = mediaList.map((item) => {
+    const formattedItems = filteredList.map((item) => {
       const streamingPlatforms = (item.externalLinks || []).filter(link => 
         ['Crunchyroll', 'Netflix', 'Amazon', 'Hulu', 'Disney+', 'Funimation', 'Anime Onegai'].some(s => 
           link.site.toLowerCase().includes(s.toLowerCase())
@@ -245,7 +283,7 @@ export async function searchSagasFromAniList(queryText) {
       id: `saga-${mainMedia.id}`,
       title: baseTitle,
       subtitle: mainMedia.genres?.slice(0, 2).join(' • ') || 'Anime',
-      cover: mainMedia.coverImage?.extraLarge,
+      cover: mainMedia.coverImage?.extraLarge || mainMedia.coverImage?.large,
       rating: mainMedia.averageScore ? (mainMedia.averageScore / 10).toFixed(1) : '8.0',
       description: mainMedia.description ? mainMedia.description.replace(/<[^>]*>?/gm, '') : '',
       items: formattedItems
